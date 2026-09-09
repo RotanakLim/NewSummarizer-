@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{{ article.title }} - NewSummarizer{% endblock %}
+{% block content %}
+  <a class="back-link" href="{{ url_for('category', category=article.category) }}">&larr; Back</a>
+  <h1>{{ article.title }}</h1>
+  <p class="article-meta">
+    <a href="{{ article.link }}" target="_blank" rel="noopener">Read on Reuters</a>
+    {% if article.published %}&middot; {{ article.published }}{% endif %}
+  </p>
+  <p>{{ article.summary }}</p>
+
+  <h2>60-second script</h2>
+  {% if error %}
+    <p class="error">Couldn't generate a script: {{ error }}</p>
+  {% else %}
+    <pre class="script-box">{{ script }}</pre>
+  {% endif %}
+{% endblock %}

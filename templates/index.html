@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}NewSummarizer{% endblock %}
+{% block content %}
+  <section class="hero">
+    <h1>Turn Reuters articles into 60-second Shorts scripts</h1>
+    <p>Pick a category below, choose an article, and get a ready-to-read script.</p>
+  </section>
+  <ul class="category-grid">
+    {% for slug, label in categories.items() %}
+      <li>
+        <a class="category-card" href="{{ url_for('category', category=slug) }}">{{ label }}</a>
+      </li>
+    {% endfor %}
+  </ul>
+{% endblock %}

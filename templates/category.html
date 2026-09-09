@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}{{ label }} - NewSummarizer{% endblock %}
+{% block content %}
+  <h1>{{ label }}</h1>
+
+  {% if error %}
+    <p class="error">Couldn't load this feed: {{ error }}</p>
+  {% elif not articles %}
+    <p>No articles found right now.</p>
+  {% else %}
+    <ul class="article-list">
+      {% for a in articles %}
+        <li class="article-item">
+          <a href="{{ url_for('article', article_id=a.id) }}">{{ a.title }}</a>
+          {% if a.summary %}<p>{{ a.summary }}</p>{% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+{% endblock %}
