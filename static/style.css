@@ -81,20 +81,24 @@ main {
 .article-list { list-style: none; padding: 0; }
 
 .article-item {
-  padding: 1rem 0;
+  padding: 1.5rem 0;
   border-bottom: 1px solid var(--border);
 }
 
-.article-item a {
-  font-weight: 600;
-  color: var(--fg);
-  text-decoration: none;
+.article-item h2 {
+  margin: 0 0 0.3rem;
+  font-size: 1.15rem;
 }
 
-.article-item a:hover { color: var(--accent); }
+.article-item h3 {
+  margin: 1rem 0 0.4rem;
+  font-size: 0.95rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
 
-.article-item p {
-  margin: 0.3rem 0 0;
+.article-item .summary {
   color: var(--muted);
 }
 

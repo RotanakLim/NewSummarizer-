@@ -4,8 +4,8 @@ load_dotenv()
 
 from flask import Flask, render_template, abort
 
-from config import CATEGORY_LABELS
-from services.feeds import get_articles, get_article
+from config import CATEGORY_ARTICLE_LIMIT, CATEGORY_LABELS
+from services.feeds import get_articles
 from services.script_generator import generate_script
 
 app = Flask(__name__)
@@ -29,9 +29,17 @@ def category(category):
     error = None
     articles = []
     try:
-        articles = get_articles(category)
+        articles = get_articles(category, limit=CATEGORY_ARTICLE_LIMIT)
     except (ValueError, RuntimeError) as exc:
         error = str(exc)
+
+    for art in articles:
+        try:
+            art["script"] = generate_script(art)
+            art["script_error"] = None
+        except RuntimeError as exc:
+            art["script"] = None
+            art["script_error"] = str(exc)
 
     return render_template(
         "category.html",
@@ -40,22 +48,6 @@ def category(category):
         articles=articles,
         error=error,
     )
-
-
-@app.route("/article/<article_id>")
-def article(article_id):
-    art = get_article(article_id)
-    if art is None:
-        abort(404)
-
-    script = None
-    error = None
-    try:
-        script = generate_script(art)
-    except RuntimeError as exc:
-        error = str(exc)
-
-    return render_template("article.html", article=art, script=script, error=error)
 
 
 @app.errorhandler(404)

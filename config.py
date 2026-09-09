@@ -25,3 +25,7 @@ ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
 # Target word count for a spoken script that runs ~60 seconds
 # (roughly 150 words/minute for clear, energetic narration).
 SCRIPT_TARGET_WORDS = 155
+
+# A category page generates a script per article via the Anthropic API, so
+# this is kept small to keep page load times and API cost reasonable.
+CATEGORY_ARTICLE_LIMIT = 8
