@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{{ label }} - NewSummarizer{% endblock %}
+{% block content %}
+  <h1>{{ label }}</h1>
+
+  {% if error %}
+    <p class="error">Couldn't load this feed: {{ error }}</p>
+  {% elif not articles %}
+    <p>No articles found right now.</p>
+  {% else %}
+    <ul class="article-list">
+      {% for a in articles %}
+        <li class="article-item">
+          <h2>{{ a.title }}</h2>
+          <p class="article-meta">
+            <a href="{{ a.link }}" target="_blank" rel="noopener">Read original on Reuters</a>
+            {% if a.published %}&middot; {{ a.published }}{% endif %}
+          </p>
+          {% if a.summary %}<p class="summary">{{ a.summary }}</p>{% endif %}
+
+          <h3>60-second script</h3>
+          {% if a.script_error %}
+            <p class="error">Couldn't generate a script: {{ a.script_error }}</p>
+          {% else %}
+            <pre class="script-box">{{ a.script }}</pre>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+{% endblock %}
