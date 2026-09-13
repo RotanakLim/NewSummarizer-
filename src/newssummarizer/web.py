@@ -15,7 +15,7 @@ PAGE = """<!doctype html><html><head><meta charset=\"utf-8\"><title>News Summari
 </style></head><body><header class=\"top\"><div><h1>News Summarizer</h1><div class=\"muted\">Source-attributed scripts for YouTube Shorts</div></div><div class=\"muted\">Local-first · No publishing from this app</div></header>
 <div class=\"notice\"><b>Editorial standard:</b> automate collection, retain every original link, and review claims before publishing. Source diversity improves context; it does not prove a script is neutral.</div>
 <details class=\"card\"><summary><b>API setup</b> — required for fully automated scripts</summary><p class=\"muted\">Keys are saved only to this computer in an ignored <code>.env</code> file. They are never shown again in this app. Use a newly rotated Guardian key if an earlier key was exposed.</p><form method=\"post\"><input type=\"hidden\" name=\"action\" value=\"configure\"><label>Guardian API key</label><input type=\"password\" name=\"guardian_key\" autocomplete=\"off\" placeholder=\"Paste a replacement key\"><label>TheNewsAPI token (optional)</label><input type=\"password\" name=\"thenewsapi_token\" autocomplete=\"off\" placeholder=\"Optional multi-publisher connector\"><button>Save local API setup</button></form><small>Configured: Guardian __GUARDIAN_STATUS__ · TheNewsAPI __THENEWS_STATUS__</small></details>
-<section class=\"card\"><h2>Generate scripts automatically</h2><p class=\"muted\">Enter one topic per line, or separate topics with commas. The app retrieves configured article-text sources, finds related coverage, and creates one cited 60–70 second script for each topic.</p><form method=\"post\"><input type=\"hidden\" name=\"action\" value=\"automate\"><div class=\"grid\"><div><label>Topics</label><textarea name=\"topics\" required placeholder=\"e.g. climate summit negotiations&#10;central-bank rate decision&#10;new AI chip release\"></textarea></div><div><label>Category</label><select name=\"section\"><option>general</option><option>geopolitics</option><option>business</option><option>world</option><option>environment</option><option>technology</option><option>artificial intelligence</option><option>gaming</option></select><label>Maximum text sources per script</label><select name=\"source_limit\"><option>2</option><option selected>3</option><option>4</option><option>5</option></select><small>GDELT adds comparison links. Configure <code>GUARDIAN_API_KEY</code> and/or <code>THENEWSAPI_API_TOKEN</code> to supply source text for automated scripts.</small></div></div><button>Find sources & generate scripts</button></form></section>
+<section class=\"card\"><h2>Generate a category briefing</h2><p class=\"muted\">Choose one category. The app collects several recent articles in that category and creates a separate, source-cited 60–70 second script for each distinct story it can support. There is no topic entry step.</p><form method=\"post\"><input type=\"hidden\" name=\"action\" value=\"category\"><div class=\"grid\"><div><label>Category</label><select name=\"section\"><option>general</option><option>geopolitics</option><option>business</option><option>world</option><option>environment</option><option>technology</option><option>artificial intelligence</option><option>gaming</option></select></div><div><label>Scripts to create</label><select name=\"script_count\"><option>2</option><option selected>3</option><option>4</option><option>5</option></select><small>Each script is built around one article. Available comparison links are attached for the reader. Configure Guardian and/or TheNewsAPI for live collection.</small></div></div><button>Generate category scripts</button></form><form method=\"post\"><input type=\"hidden\" name=\"action\" value=\"demo\"><button class=\"secondary\">Run test preview</button><small>Uses clearly labelled sample reporting and placeholder links—no API key or network request required.</small></form></section>
 <details class=\"card\"><summary><b>Advanced: create from saved source text</b></summary><p class=\"muted\">Use this only when material is not available through the configured automated sources.</p><form method=\"post\"><input type=\"hidden\" name=\"action\" value=\"draft\"><label>Topic / script headline</label><input name=\"topic\" required placeholder=\"What happened?\"><div class=\"grid\">__SOURCE_1____SOURCE_2____SOURCE_3__</div><button>Generate from saved sources</button></form></details>
 <section><h2>Recent local scripts</h2>__HISTORY__</section>__RESULT__
 <script>function copyScript(){const value=document.getElementById('script-text').innerText;navigator.clipboard.writeText(value);document.getElementById('copy-status').textContent='Copied.'}</script></body></html>"""
@@ -58,37 +58,56 @@ def draft_result(script: Script, articles: list[Article]) -> str:
     sources = "".join(source_card(item) for item in articles)
     markdown = html.escape(to_markdown(script))
     punctuation = "Complete" if quality["punctuation_complete"] else "Review needed"
-    return f"""<section class=\"card\"><h2>3. Review your draft</h2><div class=\"stats\"><div class=\"stat\"><b>{len(articles)}</b>sources</div><div class=\"stat\"><b>{publishers}</b>publishers</div><div class=\"stat\"><b>~{quality["words"] // 2}</b>seconds</div><div class=\"stat\"><b>{quality["sentences"]}</b>sentences</div><div class=\"stat\"><b>{punctuation}</b>punctuation</div><div class=\"stat\"><b>{html.escape(status)}</b></div></div><h3>Narration</h3><pre id=\"script-text\">{html.escape(script.body)}</pre><button type=\"button\" onclick=\"copyScript()\">Copy script</button><span id=\"copy-status\" class=\"muted\"></span><h3>Source links for description</h3>{sources}<details><summary>View Markdown export</summary><pre>{markdown}</pre></details></section>"""
+    return f"""<section class=\"card\"><h2>Review your draft</h2><div class=\"stats\"><div class=\"stat\"><b>{len(articles)}</b>sources</div><div class=\"stat\"><b>{publishers}</b>publishers</div><div class=\"stat\"><b>~{quality["words"] // 2}</b>seconds</div><div class=\"stat\"><b>{quality["sentences"]}</b>sentences</div><div class=\"stat\"><b>{punctuation}</b>punctuation</div><div class=\"stat\"><b>{html.escape(status)}</b></div></div><h3>Narration</h3><pre id=\"script-text\">{html.escape(script.body)}</pre><button type=\"button\" onclick=\"copyScript()\">Copy script</button><span id=\"copy-status\" class=\"muted\"></span><h3>Source links for description</h3>{sources}<details><summary>View Markdown export</summary><pre>{markdown}</pre></details></section>"""
 
 
-def parse_topics(raw_topics: str) -> list[str]:
-    topics = []
-    for topic in raw_topics.replace(",", "\n").splitlines():
-        topic = topic.strip()
-        if topic and topic.casefold() not in {item.casefold() for item in topics}:
-            topics.append(topic)
-    if not topics:
-        raise ValueError("Enter at least one topic.")
-    if len(topics) > 10:
-        raise ValueError("Use up to 10 topics per automated run.")
-    return topics
+def _unique_articles(articles: list[Article]) -> list[Article]:
+    unique, seen = [], set()
+    for article in articles:
+        key = (article.url.casefold(), article.title.casefold())
+        if key not in seen and article.text.strip():
+            unique.append(article)
+            seen.add(key)
+    return unique
 
 
-def automated_result(store: Store, topics: list[str], section: str, source_limit: int) -> str:
+def category_result(store: Store, section: str, script_count: int) -> str:
+    """Turn a category feed into one script per distinct source article."""
+    text_sources, comparison_links = discover(f"latest {section} news", section)
+    candidates = _unique_articles(text_sources)[:script_count]
+    for article in [*text_sources, *comparison_links]:
+        store.save_article(article)
+    if not candidates:
+        return ('<section class="card"><b>No usable category articles were returned.</b> '
+                'Add a valid Guardian or TheNewsAPI key in API setup, then retry.</section>')
     results = []
-    for topic in topics:
-        text_sources, comparison_links = discover(topic, section)
-        for article in [*text_sources, *comparison_links]:
-            store.save_article(article)
-        text_sources = text_sources[:source_limit]
-        if not text_sources:
-            results.append(f'<div class="source"><b>{html.escape(topic)}</b><br><small>No configured API returned usable article text. Add a Guardian or TheNewsAPI key, then retry.</small></div>')
-            continue
-        all_sources = [*text_sources, *comparison_links[:max(0, 8 - len(text_sources))]]
-        script = make_script(text_sources[0], all_sources[1:])
+    for article in candidates:
+        # Links without saved text are displayed for context but never narrated.
+        related = comparison_links[:6]
+        script = make_script(article, related)
         store.save_script(script)
-        results.append(draft_result(script, all_sources))
-    return f'<section class="card"><h2>Automated run complete</h2><p class="muted">Created {sum("Narration" in item for item in results)} script(s) from {len(topics)} topic(s). Review every draft and its original links before publishing.</p></section>' + "".join(results)
+        results.append(draft_result(script, [article, *related]))
+    return (f'<section class="card"><h2>Category briefing complete</h2><p class="muted">Created {len(candidates)} '
+            f'script(s) from recent {html.escape(section)} coverage. Each draft represents a distinct story; verify the attached links before publishing.</p></section>' + "".join(results))
+
+
+def demo_result(store: Store) -> str:
+    """Offline preview that demonstrates the output without masquerading as news."""
+    samples = [
+        ("Sample: transit agency opens a new rail extension", "A demonstration transit agency opened a new rail extension on Monday after years of construction. The sample project connects three neighborhoods and adds stations designed for wheelchair access.", "Riders will be able to transfer between the new line and two existing routes. Officials said they will monitor crowding and adjust service after the first month."),
+        ("Sample: city launches a community solar program", "A demonstration city launched a community solar program intended to let renters subscribe to a shared array. The sample plan says participants receive bill credits based on the electricity produced.", "Enrollment rules and the size of the credits have not been finalized. Consumer advocates said clear pricing information will be important before applications open."),
+        ("Sample: local university tests a flood warning tool", "A demonstration university began testing a flood warning tool that combines rainfall gauges with neighborhood alerts. The sample system is intended to give residents more time to move vehicles and avoid low-lying roads.", "The trial will compare automated alerts with reports from emergency managers. Researchers said the tool will need testing across several storms before it can be evaluated."),
+    ]
+    results = []
+    for index, (title, primary_text, comparison_text) in enumerate(samples, start=1):
+        primary = Article(url=f"https://example.com/demo/{index}-primary", title=title, section="demo", publisher="Example Daily", text=primary_text)
+        comparison = Article(url=f"https://example.com/demo/{index}-comparison", title=title, section="demo", publisher="Example Regional Report", text=comparison_text)
+        for article in (primary, comparison):
+            store.save_article(article)
+        script = make_script(primary, [comparison])
+        store.save_script(script)
+        results.append(draft_result(script, [primary, comparison]))
+    return '<section class="card"><h2>Test preview</h2><p class="muted">These are fictional demonstration sources with placeholder links, included only to show the final layout and script quality. They are not real reporting.</p></section>' + "".join(results)
 
 
 def render(store: Store, result: str = "") -> str:
@@ -119,20 +138,14 @@ def serve(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> None:
                         "THENEWSAPI_API_TOKEN": fields.get("thenewsapi_token", [""])[0],
                     })
                     result = '<section class="card"><b>Local API setup saved.</b> You can now run automated searches without restarting the app.</section>'
-                elif action == "automate":
-                    result = automated_result(
+                elif action == "category":
+                    result = category_result(
                         store,
-                        parse_topics(fields["topics"][0]),
                         fields.get("section", ["general"])[0],
-                        int(fields.get("source_limit", ["3"])[0]),
+                        int(fields.get("script_count", ["3"])[0]),
                     )
-                elif action == "discover":
-                    topic = fields["query"][0].strip()
-                    licensed, comparisons = discover(topic, fields.get("section", ["general"])[0])
-                    for article in [*licensed, *comparisons]:
-                        store.save_article(article)
-                    cards = "".join(source_card(article) for article in [*licensed, *comparisons])
-                    result = f'<section class="card"><h2>Coverage found</h2>{cards}<p class="muted">Use the source editor above to compare text and generate a cited narration.</p></section>' if cards else '<section class="card">No coverage returned. Try a more specific topic later.</section>'
+                elif action == "demo":
+                    result = demo_result(store)
                 else:
                     topic = fields["topic"][0].strip()
                     articles = fields_to_articles(fields, topic)

@@ -45,7 +45,9 @@ def make_script(article: Article, perspectives: list[Article]) -> Script:
         sentences = _sentences(item.text)
         # The primary source's first sentence is already the lead. Later
         # sentences add context instead of restating the opening.
-        candidates = sentences[1:3] if index == 0 else sentences[:2]
+        # Use enough source material to reach a coherent 60–70 second read,
+        # while the word budget below prevents an overlong narration.
+        candidates = sentences[1:4] if index == 0 else sentences[:3]
         for sentence_index, sentence in enumerate(candidates):
             if sentence.casefold().startswith(item.publisher.casefold()):
                 sentence = sentence[len(item.publisher):].lstrip(" ,:-")

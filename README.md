@@ -61,7 +61,7 @@ newssummarizer serve
 
 Keys belong in your local shell or a secret manager—never in the browser UI or Git. The app does not collect, store, or transmit a key.
 
-In the browser, enter one topic per line under **Generate scripts automatically**, select a category, then choose **Find sources & generate scripts**. The app creates one local, cited script per topic. It will not invent a script when configured APIs return no usable article text.
+In the browser, choose a category under **Generate a category briefing**, select how many scripts to make, then choose **Generate category scripts**. The app creates one local, cited script per distinct article returned in that category. It will not invent a script when configured APIs return no usable article text. Use **Run test preview** at any time to see three fictional, offline-only examples of the final script layout.
 
 ## Limits and responsible use
 
