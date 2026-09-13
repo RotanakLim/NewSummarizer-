@@ -17,21 +17,31 @@ def make_script(article: Article, perspectives: list[Article]) -> Script:
     It is intentionally extractive: while offline it uses only cached text and
     never invents details that are absent from those local records.
     """
-    chosen: list[str] = []
-    count = 0
-    for sentence in _sentences(article.text):
-        if count + len(sentence.split()) > TARGET_WORDS - 55:
+    sources_with_text = [item for item in [article, *perspectives] if item.text.strip()]
+    chosen, count = [], 0
+    # Round-robin source selection makes the narration cite more than one
+    # outlet when the user has supplied multiple reports.
+    for item in sources_with_text:
+        for sentence in _sentences(item.text):
+            line = f"{item.publisher} reports {sentence}"
+            if count + len(line.split()) > TARGET_WORDS - 38:
+                break
+            chosen.append(line)
+            count += len(line.split())
             break
-        chosen.append(sentence)
-        count += len(sentence.split())
+    for sentence in _sentences(article.text):
+        line = f"{article.publisher} also reports {sentence}"
+        if count + len(line.split()) > TARGET_WORDS - 38:
+            break
+        if line not in chosen:
+            chosen.append(line)
+            count += len(line.split())
     if not chosen:
-        chosen = ["This source is included as a headline and link, not as enough licensed full text to narrate its details."]
-    extra = ""
-    if perspectives:
-        labels = ", ".join(p.publisher for p in perspectives[:4])
-        extra = f" To compare coverage, review original reporting from {labels}. Those links are included below; their presence does not mean they agree with every claim."
-    body = (f"Here is the source-attributed update on {article.title}. According to {article.publisher}: "
-            f"{' '.join(chosen)}{extra} Before sharing, check the source links and distinguish verified facts from claims or analysis.")
+        chosen = ["The saved sources do not contain enough article text for a factual narration."]
+    labels = ", ".join(dict.fromkeys(item.publisher for item in [article, *perspectives]))
+    body = (f"Here is the source-attributed update on {article.title}. {' '.join(chosen)} "
+            f"For other coverage, compare the original reporting from {labels}. "
+            "The links are in the description. Separate verified facts from claims, commentary, and analysis before publishing.")
     sources = [{"publisher": article.publisher, "title": article.title, "url": article.url}]
     sources.extend({"publisher": p.publisher, "title": p.title, "url": p.url} for p in perspectives)
     return Script(article_url=article.url, title=article.title, created_at=utc_now(), body=body, sources=sources)

@@ -40,3 +40,8 @@ class Store:
         path.write_text(json.dumps(script.to_dict(), indent=2), encoding="utf-8")
         path.with_suffix(".md").write_text(to_markdown(script), encoding="utf-8")
         return path
+
+    def recent_scripts(self, limit: int = 6) -> list[Script]:
+        scripts = [Script.from_dict(json.loads(path.read_text(encoding="utf-8")))
+                   for path in self.scripts.glob("*.json")]
+        return sorted(scripts, key=lambda script: script.created_at, reverse=True)[:limit]
