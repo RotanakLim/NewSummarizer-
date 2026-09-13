@@ -2,10 +2,41 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import httpx
 
 from .models import Article
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def local_secret(name: str) -> str | None:
+    """Read a key from the environment, then the local ignored .env file."""
+    if value := os.environ.get(name):
+        return value
+    env_file = PROJECT_ROOT / ".env"
+    if not env_file.exists():
+        return None
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key.strip() == name:
+            return value.strip().strip('"').strip("'") or None
+    return None
+
+
+def save_local_secrets(values: dict[str, str]) -> None:
+    """Update only known key names in an ignored local .env file."""
+    env_file = PROJECT_ROOT / ".env"
+    existing = {}
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.partition("=")
+            if separator:
+                existing[key.strip()] = value.strip()
+    existing.update({key: value.strip() for key, value in values.items() if value.strip()})
+    safe_lines = [f"{key}={value}" for key, value in existing.items() if key in {"GUARDIAN_API_KEY", "THENEWSAPI_API_TOKEN"}]
+    env_file.write_text("\n".join(safe_lines) + "\n", encoding="utf-8")
 
 
 class ProviderUnavailable(RuntimeError):
@@ -35,7 +66,7 @@ def gdelt_search(query: str, limit: int = 8) -> list[Article]:
 
 def guardian_search(query: str, section: str | None = None, limit: int = 3) -> list[Article]:
     """Get licensed full text from Guardian Open Platform when a key is set."""
-    api_key = os.environ.get("GUARDIAN_API_KEY")
+    api_key = local_secret("GUARDIAN_API_KEY")
     if not api_key:
         return []
     params = {"api-key": api_key, "q": query, "show-fields": "body", "page-size": str(limit)}
@@ -46,6 +77,10 @@ def guardian_search(query: str, section: str | None = None, limit: int = 3) -> l
     if section in guardian_sections:
         params["section"] = guardian_sections[section]
     response = httpx.get("https://content.guardianapis.com/search", params=params, timeout=25)
+    if response.status_code == 401:
+        raise ProviderUnavailable("Guardian rejected the saved API key. Replace it in API setup with a valid, newly rotated key.")
+    if response.status_code == 429:
+        raise ProviderUnavailable("Guardian is rate-limiting requests. Wait a few minutes and try again.")
     response.raise_for_status()
     return [Article(url=item["webUrl"], title=item["webTitle"], section=item.get("sectionId", "general"),
                     publisher="The Guardian", published_at=item.get("webPublicationDate"),
@@ -59,12 +94,16 @@ def thenewsapi_search(query: str, limit: int = 4) -> list[Article]:
     The provider returns metadata and a description, so the description is kept
     as attributed source text rather than treated as a full article.
     """
-    api_token = os.environ.get("THENEWSAPI_API_TOKEN")
+    api_token = local_secret("THENEWSAPI_API_TOKEN")
     if not api_token:
         return []
     response = httpx.get("https://api.thenewsapi.com/v1/news/all", params={
         "api_token": api_token, "search": query, "language": "en", "limit": str(limit),
     }, timeout=25)
+    if response.status_code == 401:
+        raise ProviderUnavailable("TheNewsAPI rejected the saved token. Replace it in API setup or leave that connector blank.")
+    if response.status_code == 429:
+        raise ProviderUnavailable("TheNewsAPI is rate-limiting requests. Wait a few minutes and try again.")
     response.raise_for_status()
     articles, seen_publishers = [], set()
     for item in response.json().get("data", []):
