@@ -42,6 +42,10 @@ class Store:
         return path
 
     def recent_scripts(self, limit: int = 6) -> list[Script]:
+        return self.all_scripts()[:limit]
+
+    def all_scripts(self) -> list[Script]:
+        """Return every locally saved script, newest first."""
         scripts = [Script.from_dict(json.loads(path.read_text(encoding="utf-8")))
                    for path in self.scripts.glob("*.json")]
-        return sorted(scripts, key=lambda script: script.created_at, reverse=True)[:limit]
+        return sorted(scripts, key=lambda script: script.created_at, reverse=True)

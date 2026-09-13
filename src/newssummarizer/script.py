@@ -71,8 +71,10 @@ def make_script(article: Article, perspectives: list[Article]) -> Script:
                   f"Read the original coverage from {source_names} through the links in the description before drawing conclusions.")
     paragraphs.append(conclusion)
     body = "\n\n".join(paragraphs)
-    sources = [{"publisher": article.publisher, "title": article.title, "url": article.url}]
-    sources.extend({"publisher": p.publisher, "title": p.title, "url": p.url} for p in perspectives)
+    sources = [{"publisher": article.publisher, "title": article.title, "url": article.url,
+                "published_at": article.published_at or ""}]
+    sources.extend({"publisher": p.publisher, "title": p.title, "url": p.url,
+                    "published_at": p.published_at or ""} for p in perspectives)
     return Script(article_url=article.url, title=article.title, created_at=utc_now(), body=body, sources=sources)
 
 

@@ -2,13 +2,23 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import httpx
+from bs4 import BeautifulSoup
 
 from .models import Article
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def plain_text(value: str) -> str:
+    """Convert provider HTML to clean narration text without changing facts."""
+    if "<" not in value:
+        return value.strip()
+    text = BeautifulSoup(value, "html.parser").get_text(" ", strip=True)
+    return re.sub(r"\s+([,.;:!?])", r"\1", text)
 
 
 def local_secret(name: str) -> str | None:
@@ -84,7 +94,7 @@ def guardian_search(query: str, section: str | None = None, limit: int = 3) -> l
     response.raise_for_status()
     return [Article(url=item["webUrl"], title=item["webTitle"], section=item.get("sectionId", "general"),
                     publisher="The Guardian", published_at=item.get("webPublicationDate"),
-                    text=item.get("fields", {}).get("body", ""))
+                    text=plain_text(item.get("fields", {}).get("body", "")))
             for item in response.json()["response"]["results"]]
 
 
