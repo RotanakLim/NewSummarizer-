@@ -39,8 +39,12 @@ def guardian_search(query: str, section: str | None = None, limit: int = 3) -> l
     if not api_key:
         return []
     params = {"api-key": api_key, "q": query, "show-fields": "body", "page-size": str(limit)}
-    if section and section != "general":
-        params["section"] = section
+    guardian_sections = {
+        "world": "world", "business": "business", "environment": "environment",
+        "technology": "technology", "artificial intelligence": "technology", "gaming": "culture",
+    }
+    if section in guardian_sections:
+        params["section"] = guardian_sections[section]
     response = httpx.get("https://content.guardianapis.com/search", params=params, timeout=25)
     response.raise_for_status()
     return [Article(url=item["webUrl"], title=item["webTitle"], section=item.get("sectionId", "general"),
@@ -49,5 +53,38 @@ def guardian_search(query: str, section: str | None = None, limit: int = 3) -> l
             for item in response.json()["response"]["results"]]
 
 
+def thenewsapi_search(query: str, limit: int = 4) -> list[Article]:
+    """Optional multi-publisher summaries from TheNewsAPI.
+
+    The provider returns metadata and a description, so the description is kept
+    as attributed source text rather than treated as a full article.
+    """
+    api_token = os.environ.get("THENEWSAPI_API_TOKEN")
+    if not api_token:
+        return []
+    response = httpx.get("https://api.thenewsapi.com/v1/news/all", params={
+        "api_token": api_token, "search": query, "language": "en", "limit": str(limit),
+    }, timeout=25)
+    response.raise_for_status()
+    articles, seen_publishers = [], set()
+    for item in response.json().get("data", []):
+        publisher = item.get("source", "Unknown publisher")
+        if isinstance(publisher, dict):
+            publisher = publisher.get("name") or publisher.get("url") or "Unknown publisher"
+        if not item.get("url") or publisher.casefold() in seen_publishers:
+            continue
+        seen_publishers.add(publisher.casefold())
+        articles.append(Article(
+            url=item["url"], title=item.get("title", query), section="general", publisher=publisher,
+            published_at=item.get("published_at"), text=item.get("description") or "",
+        ))
+    return articles
+
+
 def discover(query: str, section: str = "general") -> tuple[list[Article], list[Article]]:
-    return guardian_search(query, section), gdelt_search(query)
+    scriptable = [*guardian_search(query, section), *thenewsapi_search(query)]
+    try:
+        comparisons = gdelt_search(query)
+    except ProviderUnavailable:
+        comparisons = []
+    return scriptable, comparisons

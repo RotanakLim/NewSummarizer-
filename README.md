@@ -47,16 +47,21 @@ Scripts are saved to `data/scripts/` as JSON and Markdown. The Markdown version 
 | --- | --- | --- |
 | GDELT DOC 2.0 | No key | Finds cross-publisher coverage and original links. |
 | Guardian Open Platform | Set `GUARDIAN_API_KEY` in your terminal | Retrieves permissioned Guardian article text for automated narration. |
+| TheNewsAPI | Set `THENEWSAPI_API_TOKEN` in your terminal | Supplies attributed multi-publisher descriptions for automated narration. |
 | Saved text | No key | Best offline mode: script from material you already have permission to use. |
 
 To enable Guardian before launching the local browser interface:
 
 ```bash
 export GUARDIAN_API_KEY="your-developer-key"
+# Optional: adds attributed descriptions from additional publishers
+export THENEWSAPI_API_TOKEN="your-api-token"
 newssummarizer serve
 ```
 
 Keys belong in your local shell or a secret manager—never in the browser UI or Git. The app does not collect, store, or transmit a key.
+
+In the browser, enter one topic per line under **Generate scripts automatically**, select a category, then choose **Find sources & generate scripts**. The app creates one local, cited script per topic. It will not invent a script when configured APIs return no usable article text.
 
 ## Limits and responsible use
 
