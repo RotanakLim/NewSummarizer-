@@ -1,0 +1,8 @@
+Metadata-Version: 2.4
+Name: newssummarizer
+Version: 0.1.0
+Summary: Cache Reuters stories, compare independent coverage, and write one-minute scripts.
+Requires-Python: >=3.11
+Requires-Dist: beautifulsoup4>=4.12
+Requires-Dist: httpx>=0.27
+Requires-Dist: trafilatura>=1.9

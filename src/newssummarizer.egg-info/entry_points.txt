@@ -1,0 +1,2 @@
+[console_scripts]
+newssummarizer = newssummarizer.cli:main
