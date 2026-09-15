@@ -1,6 +1,6 @@
 # NewSummarizer
 
-An offline-first personal research tool for turning source material into approximately 60-second YouTube Shorts scripts. Every generated script retains original source links and labels comparison coverage honestly rather than promising neutrality.
+An offline-first personal research tool for turning source material into compact, detailed video explainers. Every generated script retains original source links and labels comparison coverage honestly rather than promising neutrality.
 
 ## What works offline
 

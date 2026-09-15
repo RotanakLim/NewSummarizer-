@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import html
 import hashlib
+import re
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs
 
 from .models import Article, Script
-from .providers import ProviderUnavailable, discover, local_secret, plain_text, save_local_secrets
-from .script import make_script, quality_signals, to_markdown
+from .providers import ProviderUnavailable, discover, discover_current_category, local_secret, plain_text, save_local_secrets
+from .script import make_script, narration_ready, quality_signals, to_markdown
 from .store import Store
 
 PAGE = """<!doctype html><html><head><meta charset=\"utf-8\"><title>News Summarizer</title><style>
@@ -16,9 +18,9 @@ PAGE = """<!doctype html><html><head><meta charset=\"utf-8\"><title>News Summari
 </style></head><body><header class=\"top\"><div><h1>News Summarizer</h1><div class=\"muted\">Source-attributed scripts for YouTube Shorts</div></div><div class=\"muted\">Local-first · No publishing from this app</div></header>
 <div class=\"notice\"><b>Editorial standard:</b> automate collection, retain every original link, and review claims before publishing. Source diversity improves context; it does not prove a script is neutral.</div>
 <details class=\"card\"><summary><b>API setup</b> — required for fully automated scripts</summary><p class=\"muted\">Keys are saved only to this computer in an ignored <code>.env</code> file. They are never shown again in this app. Use a newly rotated Guardian key if an earlier key was exposed.</p><form method=\"post\"><input type=\"hidden\" name=\"action\" value=\"configure\"><label>Guardian API key</label><input type=\"password\" name=\"guardian_key\" autocomplete=\"off\" placeholder=\"Paste a replacement key\"><label>TheNewsAPI token (optional)</label><input type=\"password\" name=\"thenewsapi_token\" autocomplete=\"off\" placeholder=\"Optional multi-publisher connector\"><button>Save local API setup</button></form><small>Configured: Guardian __GUARDIAN_STATUS__ · TheNewsAPI __THENEWS_STATUS__</small></details>
-<section class=\"card\"><h2>Generate a category briefing</h2><p class=\"muted\">Choose one category. The app collects several recent articles in that category and creates a separate, source-cited 60–70 second script for each distinct story it can support. There is no topic entry step.</p><form method=\"post\"><input type=\"hidden\" name=\"action\" value=\"category\"><div class=\"grid\"><div><label>Category</label><select name=\"section\"><option>general</option><option>geopolitics</option><option>business</option><option>world</option><option>environment</option><option>technology</option><option>artificial intelligence</option><option>gaming</option></select></div><div><label>Scripts to create</label><select name=\"script_count\"><option>2</option><option selected>3</option><option>4</option><option>5</option></select><small>Each script is built around one article. Available comparison links are attached for the reader. Configure Guardian and/or TheNewsAPI for live collection.</small></div></div><button>Generate category scripts</button></form><form method=\"post\"><input type=\"hidden\" name=\"action\" value=\"demo\"><button class=\"secondary\">Run test preview</button><small>Uses clearly labelled sample reporting and placeholder links—no API key or network request required.</small></form></section>
+<section class=\"card\"><h2>Generate a current-events briefing</h2><p class=\"muted\">Choose one category. The app searches only coverage published in the last two days, skips articles already used in your scripts, and creates a compact, detailed explainer for each distinct story it can support.</p><form method=\"post\"><input type=\"hidden\" name=\"action\" value=\"category\"><div class=\"grid\"><div><label>Category</label><select name=\"section\"><option>general</option><option>geopolitics</option><option>business</option><option>world</option><option>environment</option><option>technology</option><option>artificial intelligence</option><option>gaming</option></select></div><div><label>Scripts to create</label><select name=\"script_count\"><option>2</option><option selected>3</option><option>4</option><option>5</option></select><small>Scripts usually run about 1–2 minutes when sources support it. The app keeps relevant background and context from the article, rotates publishers when available, and will not reuse an earlier script.</small></div></div><button>Generate current scripts</button></form><form method=\"post\"><input type=\"hidden\" name=\"action\" value=\"demo\"><button class=\"secondary\">Run test preview</button><small>Uses clearly labelled sample reporting and placeholder links—no API key or network request required.</small></form></section>
 <details class=\"card\"><summary><b>Advanced: create from saved source text</b></summary><p class=\"muted\">Use this only when material is not available through the configured automated sources.</p><form method=\"post\"><input type=\"hidden\" name=\"action\" value=\"draft\"><label>Topic / script headline</label><input name=\"topic\" required placeholder=\"What happened?\"><div class=\"grid\">__SOURCE_1____SOURCE_2____SOURCE_3__</div><button>Generate from saved sources</button></form></details>
-<section><h2>Recent local scripts</h2>__HISTORY__</section>__RESULT__
+__RESULT__
 <a class="past-link" href="/scripts">Past scripts</a><script>function copyScript(id){const value=document.getElementById(id).value;navigator.clipboard.writeText(value);document.getElementById(id+'-status').textContent='Copied.'}</script></body></html>"""
 
 PAST_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Past scripts · News Summarizer</title><style>
@@ -78,15 +80,69 @@ def _unique_articles(articles: list[Article]) -> list[Article]:
     return unique
 
 
+def _is_current(article: Article) -> bool:
+    if not article.published_at:
+        return False
+    try:
+        published = datetime.fromisoformat(article.published_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return published >= datetime.now(timezone.utc) - timedelta(days=2)
+
+
+def _title_terms(title: str) -> set[str]:
+    ignored = {"the", "a", "an", "and", "or", "of", "for", "to", "in", "on", "with", "from", "as", "at"}
+    return {term for term in re.findall(r"[a-z0-9]{3,}", title.casefold()) if term not in ignored}
+
+
+def _is_distinct_story(article: Article, prior_titles: set[str]) -> bool:
+    unsuitable = ("live", "league table", "crossword", "quiz", "podcast", "as it happened", "minute by minute")
+    title = article.title.casefold()
+    if any(phrase in title for phrase in unsuitable):
+        return False
+    terms = _title_terms(article.title)
+    for old_title in prior_titles:
+        old_terms = _title_terms(old_title)
+        if terms and old_terms and len(terms & old_terms) / min(len(terms), len(old_terms)) >= 0.7:
+            return False
+    return True
+
+
+def _choose_fresh_articles(store: Store, articles: list[Article], count: int) -> list[Article]:
+    prior_scripts = store.all_scripts()
+    used_urls = {script.article_url for script in prior_scripts}
+    used_titles = {script.title.casefold() for script in prior_scripts}
+    available = [article for article in _unique_articles(articles)
+                 if _is_current(article) and narration_ready(article)
+                 and article.url not in used_urls and article.title.casefold() not in used_titles
+                 and _is_distinct_story(article, used_titles)]
+    # First show one current article per publisher; only then use a second
+    # article from a publisher when the configured connectors have no diversity.
+    selected, publishers = [], set()
+    for article in available:
+        publisher = article.publisher.casefold()
+        if publisher not in publishers:
+            selected.append(article)
+            publishers.add(publisher)
+        if len(selected) == count:
+            return selected
+    for article in available:
+        if article not in selected:
+            selected.append(article)
+        if len(selected) == count:
+            break
+    return selected
+
+
 def category_result(store: Store, section: str, script_count: int) -> str:
     """Turn a category feed into one script per distinct source article."""
-    text_sources, comparison_links = discover(f"latest {section} news", section)
-    candidates = _unique_articles(text_sources)[:script_count]
+    text_sources, comparison_links = discover_current_category(section, limit=15)
+    candidates = _choose_fresh_articles(store, text_sources, script_count)
     for article in [*text_sources, *comparison_links]:
         store.save_article(article)
     if not candidates:
-        return ('<section class="card"><b>No usable category articles were returned.</b> '
-                'Add a valid Guardian or TheNewsAPI key in API setup, then retry.</section>')
+        return ('<section class="card"><b>No new current articles included enough licensed text for a full script.</b> '
+                'The app searches only the last two days and skips previously used, near-duplicate, live-blog, and ranking stories. Try another category later or add another full-text provider.</section>')
     results = []
     for article in candidates:
         # Links without saved text are displayed for context but never narrated.
@@ -95,7 +151,7 @@ def category_result(store: Store, section: str, script_count: int) -> str:
         store.save_script(script)
         results.append(draft_result(script, [article, *related]))
     return (f'<section class="card"><h2>Category briefing complete</h2><p class="muted">Created {len(candidates)} '
-            f'script(s) from recent {html.escape(section)} coverage. Each draft represents a distinct story; verify the attached links before publishing.</p></section>' + "".join(results))
+            f'script(s) from the last two days of {html.escape(section)} coverage. Previously used articles were skipped, and publishers were rotated where available.</p></section>' + "".join(results))
 
 
 def demo_result(store: Store) -> str:
@@ -129,7 +185,7 @@ def script_history_card(script: Script) -> str:
 
 
 def render_scripts(store: Store) -> str:
-    scripts = store.all_scripts()
+    scripts = [script for script in store.all_scripts() if not script.title.casefold().startswith("sample:")]
     content = "".join(script_history_card(script) for script in scripts)
     if not content:
         content = '<section class="card"><p class="muted">No scripts have been saved yet. Generate a category briefing or run the test preview first.</p></section>'
@@ -137,14 +193,9 @@ def render_scripts(store: Store) -> str:
 
 
 def render(store: Store, result: str = "") -> str:
-    history = store.recent_scripts()
-    if history:
-        items = "".join(f'<div class="source"><b>{html.escape(item.title)}</b><br><small>{html.escape(item.created_at)}</small><br><a href="{html.escape(item.article_url, quote=True)}" target="_blank">Primary original source</a></div>' for item in history)
-    else:
-        items = '<p class="muted">No scripts saved yet.</p>'
     guardian = "saved" if local_secret("GUARDIAN_API_KEY") else "not configured"
     thenewsapi = "saved" if local_secret("THENEWSAPI_API_TOKEN") else "not configured"
-    return PAGE.replace("__SOURCE_1__", source_fields(1, True)).replace("__SOURCE_2__", source_fields(2)).replace("__SOURCE_3__", source_fields(3)).replace("__HISTORY__", items).replace("__GUARDIAN_STATUS__", guardian).replace("__THENEWS_STATUS__", thenewsapi).replace("__RESULT__", result)
+    return PAGE.replace("__SOURCE_1__", source_fields(1, True)).replace("__SOURCE_2__", source_fields(2)).replace("__SOURCE_3__", source_fields(3)).replace("__GUARDIAN_STATUS__", guardian).replace("__THENEWS_STATUS__", thenewsapi).replace("__RESULT__", result)
 
 
 def serve(data_dir: Path, host: str = "127.0.0.1", port: int = 8765) -> None:

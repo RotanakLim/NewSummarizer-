@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -11,6 +12,7 @@ from bs4 import BeautifulSoup
 from .models import Article
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+FRESH_WINDOW_DAYS = 2
 
 
 def plain_text(value: str) -> str:
@@ -19,6 +21,11 @@ def plain_text(value: str) -> str:
         return value.strip()
     text = BeautifulSoup(value, "html.parser").get_text(" ", strip=True)
     return re.sub(r"\s+([,.;:!?])", r"\1", text)
+
+
+def fresh_window_start() -> str:
+    """Return the UTC date two days ago for current-event provider filters."""
+    return (datetime.now(timezone.utc) - timedelta(days=FRESH_WINDOW_DAYS)).date().isoformat()
 
 
 def local_secret(name: str) -> str | None:
@@ -53,6 +60,24 @@ class ProviderUnavailable(RuntimeError):
     """A source is temporarily unavailable or has rate-limited the request."""
 
 
+def _collect_text_sources(calls: list[tuple[str, object]]) -> list[Article]:
+    """Keep a single provider outage from cancelling an automated run."""
+    articles, failures = [], []
+    for name, search in calls:
+        try:
+            articles.extend(search())  # type: ignore[operator]
+        except ProviderUnavailable as error:
+            failures.append(f"{name}: {error}")
+        except httpx.HTTPError:
+            failures.append(f"{name}: connection unavailable")
+    if not articles and failures:
+        detail = "; ".join(failures)
+        raise ProviderUnavailable(
+            f"Live news sources could not be reached ({detail}). Check your internet connection, then try again."
+        )
+    return articles
+
+
 def gdelt_search(query: str, limit: int = 8) -> list[Article]:
     """Discover varied coverage and original links through GDELT DOC 2.0."""
     response = httpx.get("https://api.gdeltproject.org/api/v2/doc/doc", params={
@@ -79,7 +104,12 @@ def guardian_search(query: str, section: str | None = None, limit: int = 3) -> l
     api_key = local_secret("GUARDIAN_API_KEY")
     if not api_key:
         return []
-    params = {"api-key": api_key, "q": query, "show-fields": "body", "page-size": str(limit)}
+    params = {
+        "api-key": api_key, "show-fields": "body", "page-size": str(limit),
+        "order-by": "newest", "from-date": fresh_window_start(),
+    }
+    if query.strip():
+        params["q"] = query
     guardian_sections = {
         "world": "world", "business": "business", "environment": "environment",
         "technology": "technology", "artificial intelligence": "technology", "gaming": "culture",
@@ -98,7 +128,7 @@ def guardian_search(query: str, section: str | None = None, limit: int = 3) -> l
             for item in response.json()["response"]["results"]]
 
 
-def thenewsapi_search(query: str, limit: int = 4) -> list[Article]:
+def thenewsapi_search(query: str, section: str = "general", limit: int = 4) -> list[Article]:
     """Optional multi-publisher summaries from TheNewsAPI.
 
     The provider returns metadata and a description, so the description is kept
@@ -107,9 +137,19 @@ def thenewsapi_search(query: str, limit: int = 4) -> list[Article]:
     api_token = local_secret("THENEWSAPI_API_TOKEN")
     if not api_token:
         return []
-    response = httpx.get("https://api.thenewsapi.com/v1/news/all", params={
-        "api_token": api_token, "search": query, "language": "en", "limit": str(limit),
-    }, timeout=25)
+    category_map = {
+        "geopolitics": "politics", "business": "business", "world": "general",
+        "environment": "science", "technology": "tech", "artificial intelligence": "tech",
+        "gaming": "tech",
+    }
+    params = {
+        "api_token": api_token, "language": "en", "limit": str(limit),
+        "categories": category_map.get(section, "general"),
+        "published_after": fresh_window_start(), "sort": "published_at",
+    }
+    if query.strip():
+        params["search"] = query
+    response = httpx.get("https://api.thenewsapi.com/v1/news/all", params=params, timeout=25)
     if response.status_code == 401:
         raise ProviderUnavailable("TheNewsAPI rejected the saved token. Replace it in API setup or leave that connector blank.")
     if response.status_code == 429:
@@ -130,10 +170,26 @@ def thenewsapi_search(query: str, limit: int = 4) -> list[Article]:
     return articles
 
 
-def discover(query: str, section: str = "general") -> tuple[list[Article], list[Article]]:
-    scriptable = [*guardian_search(query, section), *thenewsapi_search(query)]
+def discover(query: str, section: str = "general", limit: int = 4) -> tuple[list[Article], list[Article]]:
+    scriptable = _collect_text_sources([
+        ("Guardian", lambda: guardian_search(query, section, limit=limit)),
+        ("TheNewsAPI", lambda: thenewsapi_search(query, section, limit=limit)),
+    ])
     try:
         comparisons = gdelt_search(query)
-    except ProviderUnavailable:
+    except (ProviderUnavailable, httpx.HTTPError):
+        comparisons = []
+    return scriptable, comparisons
+
+
+def discover_current_category(section: str, limit: int = 15) -> tuple[list[Article], list[Article]]:
+    """Return only fresh category coverage, ordered by the providers' publication dates."""
+    scriptable = _collect_text_sources([
+        ("Guardian", lambda: guardian_search("", section, limit=limit)),
+        ("TheNewsAPI", lambda: thenewsapi_search("", section, limit=limit)),
+    ])
+    try:
+        comparisons = gdelt_search(f"{section} news", limit=8)
+    except (ProviderUnavailable, httpx.HTTPError):
         comparisons = []
     return scriptable, comparisons
